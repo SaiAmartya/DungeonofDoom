@@ -1,316 +1,10 @@
-// Entity meshes & animation: heroes, monsters, the boss and pickups.
-// Everything is built from primitives — no external assets.
+// Entity manager: syncs server snapshots to meshes and drives animation.
+// Mesh construction lives in models.js.
 
-import * as THREE from 'three'
-
-const HERO_COLORS = [0x41b6ff, 0xff9d3e, 0x7dff8a, 0xff6bd5]
-const CAMERA_PITCH = Math.atan2(7.6, 5.9) // must match scene camera offset
-
-const yawFromFacing = (f) => Math.atan2(Math.cos(f), Math.sin(f))
-
-function circleShadow (radius) {
-  const mesh = new THREE.Mesh(
-    new THREE.CircleGeometry(radius, 18),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false })
-  )
-  mesh.rotation.x = -Math.PI / 2
-  mesh.position.y = 0.02
-  return mesh
-}
-
-function healthBar (width) {
-  const group = new THREE.Group()
-  const bg = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, 0.09),
-    new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.85, depthWrite: false })
-  )
-  const fg = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, 0.07),
-    new THREE.MeshBasicMaterial({ color: 0xd8453f, transparent: true, depthWrite: false })
-  )
-  // both are transparent so they sort by renderOrder: fill always over back
-  bg.renderOrder = 10
-  fg.renderOrder = 11
-  fg.position.z = 0.01
-  group.add(bg, fg)
-  group.rotation.x = -CAMERA_PITCH
-  group.userData = { fg, width }
-  group.visible = false
-  return group
-}
-
-function setBarFraction (bar, frac) {
-  const { fg, width } = bar.userData
-  fg.scale.x = Math.max(0.001, frac)
-  fg.position.x = -width * (1 - frac) / 2
-  bar.visible = frac < 0.999
-}
-
-// ---- mesh factories ----
-
-// a proper low-poly knight: animated legs, cuirass, pauldrons, cape,
-// visored helm with a plume, a kite-style round shield and a real sword
-function makeHero (colorIdx, isSelf) {
-  const color = HERO_COLORS[colorIdx % HERO_COLORS.length]
-  const group = new THREE.Group()
-  const rig = new THREE.Group()
-  group.add(rig)
-
-  const armorMat = new THREE.MeshStandardMaterial({ color: 0xaeb8c6, roughness: 0.34, metalness: 0.75 })
-  const mailMat = new THREE.MeshStandardMaterial({ color: 0x49505c, roughness: 0.55, metalness: 0.55 })
-  const clothMat = new THREE.MeshStandardMaterial({ color, roughness: 0.7 })
-  const capeMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(color).multiplyScalar(0.72), roughness: 0.85, side: THREE.DoubleSide
-  })
-  const trimMat = new THREE.MeshStandardMaterial({ color: 0xc9a04e, roughness: 0.35, metalness: 0.7 })
-  const leatherMat = new THREE.MeshStandardMaterial({ color: 0x4a3826, roughness: 0.85 })
-
-  // legs swing from hip pivots while running
-  const mkLeg = (side) => {
-    const hip = new THREE.Group()
-    hip.position.set(side * 0.14, 0.46, 0)
-    const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.44, 0.17), mailMat)
-    thigh.position.y = -0.22
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.26), leatherMat)
-    boot.position.set(0, -0.42, 0.04)
-    hip.add(thigh, boot)
-    rig.add(hip)
-    return hip
-  }
-  const legL = mkLeg(-1)
-  const legR = mkLeg(1)
-
-  // tunic skirt, cuirass, gold collar, belt with buckle, chest emblem
-  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.33, 0.26, 8), clothMat)
-  skirt.position.y = 0.56
-  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.29, 0.48, 8), armorMat)
-  torso.position.y = 0.88
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.23, 0.1, 8), trimMat)
-  collar.position.y = 1.13
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.08, 8), leatherMat)
-  belt.position.y = 0.67
-  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.04), trimMat)
-  buckle.position.set(0, 0.67, 0.29)
-  const emblem = new THREE.Mesh(new THREE.OctahedronGeometry(0.06, 0), trimMat)
-  emblem.position.set(0, 0.95, 0.26)
-  emblem.scale.z = 0.4
-  rig.add(skirt, torso, collar, belt, buckle, emblem)
-
-  // pauldrons
-  for (const side of [-1, 1]) {
-    const pad = new THREE.Mesh(
-      new THREE.SphereGeometry(0.15, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.7), armorMat)
-    pad.position.set(side * 0.29, 1.06, 0)
-    pad.rotation.z = -side * 0.35
-    rig.add(pad)
-  }
-
-  // cape (sways with the walk cycle) — angled out so the steep camera sees
-  // it foreshortened behind the shoulders instead of covering the back
-  const cape = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.62), capeMat)
-  cape.position.set(0, 0.88, -0.24)
-  cape.rotation.x = 0.32
-  rig.add(cape)
-
-  // helm: dome, brim, visor slit, coloured plume
-  const helm = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), armorMat)
-  helm.position.y = 1.34
-  helm.scale.y = 1.15
-  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.23, 0.06, 12), mailMat)
-  brim.position.y = 1.26
-  const visor = new THREE.Mesh(
-    new THREE.BoxGeometry(0.2, 0.055, 0.07),
-    new THREE.MeshStandardMaterial({ color: 0x101216, roughness: 0.4 })
-  )
-  visor.position.set(0, 1.34, 0.17)
-  const plume = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.34, 6), clothMat)
-  plume.position.y = 1.62
-  plume.rotation.x = -0.12
-  rig.add(helm, brim, visor, plume)
-
-  // round shield on the left arm
-  const shield = new THREE.Group()
-  shield.position.set(-0.36, 0.9, 0.1)
-  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.05, 14), clothMat)
-  face.rotation.x = Math.PI / 2
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.028, 8, 18), trimMat)
-  const bossKnob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), trimMat)
-  bossKnob.position.z = 0.05
-  shield.add(face, rim, bossKnob)
-  shield.rotation.y = -0.45
-  rig.add(shield)
-
-  // sword arm on a shoulder pivot, blade pointing forward (+z)
-  const swordPivot = new THREE.Group()
-  swordPivot.position.set(0.34, 0.98, 0.05)
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.3), mailMat)
-  arm.position.z = 0.12
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.16, 6), leatherMat)
-  grip.rotation.x = Math.PI / 2
-  grip.position.z = 0.3
-  const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), trimMat)
-  pommel.position.z = 0.21
-  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.05, 0.05), trimMat)
-  guard.position.z = 0.4
-  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdde4ee, roughness: 0.22, metalness: 0.85, emissive: 0x232a36 })
-  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.035, 0.62), bladeMat)
-  blade.position.z = 0.73
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.026, 0.12, 4), bladeMat)
-  tip.rotation.x = Math.PI / 2
-  tip.position.z = 1.1
-  swordPivot.add(arm, grip, pommel, guard, blade, tip)
-  swordPivot.rotation.x = 0.55
-  rig.add(swordPivot)
-
-  group.add(circleShadow(0.4))
-  if (isSelf) {
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.42, 0.5, 24),
-      new THREE.MeshBasicMaterial({ color: 0xe8b54d, transparent: true, opacity: 0.55, depthWrite: false })
-    )
-    ring.rotation.x = -Math.PI / 2
-    ring.position.y = 0.03
-    group.add(ring)
-  }
-  const bar = healthBar(0.9)
-  bar.position.y = 1.95
-  group.add(bar)
-
-  return { group, rig, parts: { swordPivot, legL, legR, cape }, bar }
-}
-
-function makeGrunt () {
-  const group = new THREE.Group()
-  const rig = new THREE.Group()
-  group.add(rig)
-
-  const body = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.4, 0),
-    new THREE.MeshStandardMaterial({ color: 0x7e1f1f, roughness: 0.8, flatShading: true })
-  )
-  body.position.y = 0.46
-  rig.add(body)
-
-  const hornMat = new THREE.MeshStandardMaterial({ color: 0x2c2620, roughness: 0.7 })
-  for (const side of [-1, 1]) {
-    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.27, 6), hornMat)
-    horn.position.set(side * 0.2, 0.85, 0)
-    horn.rotation.z = -side * 0.5
-    rig.add(horn)
-  }
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffd23e })
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), eyeMat)
-    eye.position.set(side * 0.13, 0.56, 0.32)
-    rig.add(eye)
-  }
-
-  group.add(circleShadow(0.42))
-  const bar = healthBar(0.8)
-  bar.position.y = 1.15
-  group.add(bar)
-  return { group, rig, parts: {}, bar }
-}
-
-function makeBrute () {
-  const group = new THREE.Group()
-  const rig = new THREE.Group()
-  group.add(rig)
-
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.85, 0.95, 0.65),
-    new THREE.MeshStandardMaterial({ color: 0x4a4438, roughness: 0.95, flatShading: true })
-  )
-  body.position.y = 0.55
-  rig.add(body)
-
-  const head = new THREE.Mesh(
-    new THREE.BoxGeometry(0.34, 0.3, 0.32),
-    new THREE.MeshStandardMaterial({ color: 0x3a352c, roughness: 0.9 })
-  )
-  head.position.y = 1.18
-  rig.add(head)
-
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xb76bff })
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), eyeMat)
-    eye.position.set(side * 0.09, 1.2, 0.17)
-    rig.add(eye)
-  }
-  const fistMat = new THREE.MeshStandardMaterial({ color: 0x55503f, roughness: 0.9 })
-  for (const side of [-1, 1]) {
-    const fist = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), fistMat)
-    fist.position.set(side * 0.55, 0.42, 0.1)
-    rig.add(fist)
-  }
-
-  group.add(circleShadow(0.58))
-  const bar = healthBar(1.0)
-  bar.position.y = 1.6
-  group.add(bar)
-  return { group, rig, parts: {}, bar }
-}
-
-function makeBoss () {
-  const group = new THREE.Group()
-  const rig = new THREE.Group()
-  group.add(rig)
-
-  const body = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.95, 1),
-    new THREE.MeshStandardMaterial({ color: 0x6b1212, roughness: 0.6, flatShading: true, emissive: 0x1c0303 })
-  )
-  body.position.y = 1.05
-  rig.add(body)
-
-  const crownMat = new THREE.MeshStandardMaterial({ color: 0x1f1a16, roughness: 0.6 })
-  for (let i = 0; i < 6; i++) {
-    const ang = (i / 6) * Math.PI * 2
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 5), crownMat)
-    spike.position.set(Math.cos(ang) * 0.55, 1.95, Math.sin(ang) * 0.55)
-    spike.rotation.set(Math.sin(ang) * 0.5, 0, -Math.cos(ang) * 0.5)
-    rig.add(spike)
-  }
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff7a20 })
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10), eyeMat)
-    eye.position.set(side * 0.3, 1.25, 0.78)
-    rig.add(eye)
-  }
-  const glow = new THREE.PointLight(0xff3a20, 9, 7, 1.8)
-  glow.position.y = 1.4
-  group.add(glow)
-
-  group.add(circleShadow(1.0))
-  const bar = healthBar(1.8)
-  bar.position.y = 2.6
-  group.add(bar)
-  return { group, rig, parts: { body }, bar }
-}
-
-function makePickup (type) {
-  const group = new THREE.Group()
-  let mesh
-  if (type === 'heart') {
-    mesh = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.22, 0),
-      new THREE.MeshStandardMaterial({ color: 0xe8332e, emissive: 0x701210, roughness: 0.3 })
-    )
-  } else {
-    mesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.17, 0.17, 0.05, 14),
-      new THREE.MeshStandardMaterial({ color: 0xe8b54d, emissive: 0x6e4d12, metalness: 0.85, roughness: 0.25 })
-    )
-    mesh.rotation.z = Math.PI / 2
-  }
-  mesh.position.y = 0.45
-  group.add(mesh)
-  group.add(circleShadow(0.16))
-  group.userData.spin = mesh
-  return group
-}
-
-// ---- manager ----
+import {
+  yawFromFacing, setBarFraction,
+  makeHero, makeGrunt, makeBrute, makeBoss, makePickup
+} from './models.js'
 
 export class Entities {
   constructor (scene) {
@@ -385,15 +79,33 @@ export class Entities {
         rec.type = def.type
         rec.maxHp = def.maxHp
         rec.flashT = 0
+        rec.walk = 0
+        rec.phase = (parseInt(s.id.slice(1), 10) || 0) * 1.7
         this.scene.add(rec.group)
         this.enemies.set(s.id, rec)
       }
+      // movement blend (from snapshot deltas) drives the walk cycle
+      const moved = rec.lastX !== undefined && Math.hypot(s.x - rec.lastX, s.y - rec.lastY) > 0.004
+      rec.lastX = s.x
+      rec.lastY = s.y
+      rec.walk += ((moved ? 1 : 0) - rec.walk) * 0.15
+
       rec.group.position.set(s.x, 0, s.y)
       rec.rig.rotation.y = yawFromFacing(s.f)
       setBarFraction(rec.bar, Math.max(0, s.hp) / rec.maxHp)
 
+      const stride = Math.sin(this.time * 9 + rec.phase) * rec.walk
+      if (rec.parts.legL) {
+        rec.parts.legL.rotation.x = stride * 0.6
+        rec.parts.legR.rotation.x = -stride * 0.6
+      }
+      if (rec.parts.armL) {
+        rec.parts.armL.rotation.x = rec.parts.armL.userData.base - stride * 0.35
+        rec.parts.armR.rotation.x = rec.parts.armR.userData.base + stride * 0.35
+      }
+
       const idleBob = Math.sin(this.time * 6 + s.x * 3) * 0.04
-      rec.rig.position.y = idleBob
+      rec.rig.position.y = idleBob + Math.abs(stride) * 0.04
       if (rec.type === 'boss') {
         const pulse = 1 + Math.sin(this.time * 3) * 0.04
         rec.rig.scale.setScalar(s.ds ? 1.12 : pulse)
@@ -435,16 +147,26 @@ export class Entities {
     if (rec) rec.swingT = 0
   }
 
+  // unique emissive materials of a record, with their true originals captured
+  // once before any tint. (Materials are shared across meshes in a rig, so a
+  // per-mesh capture would store an already-tinted colour as the "original".)
+  emissiveMats (rec) {
+    if (!rec.emats) {
+      const set = new Set()
+      rec.rig.traverse(obj => {
+        if (obj.material && obj.material.emissive) set.add(obj.material)
+      })
+      rec.emats = [...set]
+      for (const m of rec.emats) m.userData.origEmissive = m.emissive.clone()
+    }
+    return rec.emats
+  }
+
   flash (id, color = 0xff2010, duration = 0.18) {
     const rec = this.players.get(id) || this.enemies.get(id)
     if (!rec) return
     rec.flashT = duration
-    rec.rig.traverse(obj => {
-      if (obj.material && obj.material.emissive && !obj.userData.origEmissive) {
-        obj.userData.origEmissive = obj.material.emissive.clone()
-      }
-      if (obj.material && obj.material.emissive) obj.material.emissive.setHex(color)
-    })
+    for (const m of this.emissiveMats(rec)) m.emissive.setHex(color)
   }
 
   // play a sink-and-shrink death, then dispose
@@ -464,11 +186,7 @@ export class Entities {
       if (rec.flashT > 0) {
         rec.flashT -= dt
         if (rec.flashT <= 0) {
-          rec.rig.traverse(obj => {
-            if (obj.material && obj.material.emissive && obj.userData.origEmissive) {
-              obj.material.emissive.copy(obj.userData.origEmissive)
-            }
-          })
+          for (const m of this.emissiveMats(rec)) m.emissive.copy(m.userData.origEmissive)
         }
       }
     }
