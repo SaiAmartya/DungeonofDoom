@@ -11,13 +11,15 @@ a friend over the internet.
 ## Features
 
 - **Full 3D** — Three.js renderer with a third-person follow camera,
-  low-poly procedural art (zero asset files), pooled torch lighting,
-  fog, drifting dust, damage numbers, and screen shake
+  low-poly procedural art (zero asset files): textured stone walls and
+  flagstone floors, banners, pillars, scattered bones and rubble, pooled
+  torch lighting, fog, drifting dust, damage numbers, and screen shake
 - **Procedural dungeons** — random-walk room placement joined by corridors;
   the boss room is always the farthest room from spawn
 - **Skill-based combat** — enemy attacks are telegraphed (they glow before
-  striking), your hits stagger and knock back enemies, and dashing grants
-  invincibility frames. Incoming attacks are paced so packs circle for
+  striking), your hits knock enemies back a little, and dashing grants
+  invincibility frames. Enemies can't be stun-locked: face-tanking is a
+  trade, so keep moving. Incoming attacks are paced so packs circle for
   openings instead of bursting you down
 - **Online co-op** — host a game, share the 4-letter room code, and a friend
   joins from any browser. Allies respawn after a few seconds while you

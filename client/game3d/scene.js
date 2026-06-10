@@ -3,6 +3,8 @@
 
 import * as THREE from 'three'
 
+import { makeWallTexture, makeFloorTexture, makeBannerTexture } from './textures.js'
+
 const WALL_HEIGHT = 2.4
 const TORCH_LIGHT_POOL = 6
 
@@ -55,6 +57,13 @@ export class World {
     this.time = 0
     this.heroPosUniform = { value: new THREE.Vector3() }
 
+    // procedural textures, drawn once and reused across rebuilds
+    this.tex = {
+      wall: makeWallTexture(),
+      floor: makeFloorTexture(),
+      banner: makeBannerTexture()
+    }
+
     window.addEventListener('resize', () => this.onResize())
   }
 
@@ -91,9 +100,11 @@ export class World {
       return -1
     }
 
-    // floor: merged quads with per-tile vertex colours
+    // floor: merged quads, flagstone texture multiplied by per-tile tints
+    // (tints are brighter than the final look — the texture darkens them)
     const positions = []
     const colors = []
+    const uvs = []
     const indices = []
     let vi = 0
     for (let ty = 0; ty < size; ty++) {
@@ -101,15 +112,17 @@ export class World {
         const ch = grid[ty][tx]
         if (ch === '#') continue
         const n = tileNoise(tx, ty)
-        let r = 0.21 + n * 0.06
-        let g = 0.215 + n * 0.06
-        let b = 0.26 + n * 0.07
+        let r = 0.52 + n * 0.14
+        let g = 0.53 + n * 0.14
+        let b = 0.6 + n * 0.15
         if (ch === ',') { r *= 0.78; g *= 0.78; b *= 0.8 } // corridors darker
         const tint = roomTint.get(roomOf(tx, ty))
-        if (tint) { r = r * 0.7 + tint[0] * 0.18; g = g * 0.7 + tint[1] * 0.18; b = b * 0.7 + tint[2] * 0.18 }
+        if (tint) { r = r * 0.7 + tint[0] * 0.42; g = g * 0.7 + tint[1] * 0.42; b = b * 0.7 + tint[2] * 0.42 }
         positions.push(
           tx, 0, ty, tx + 1, 0, ty, tx + 1, 0, ty + 1, tx, 0, ty + 1
         )
+        // texture spans 2x2 tiles per repeat
+        uvs.push(tx * 0.5, ty * 0.5, tx * 0.5 + 0.5, ty * 0.5, tx * 0.5 + 0.5, ty * 0.5 + 0.5, tx * 0.5, ty * 0.5 + 0.5)
         for (let k = 0; k < 4; k++) colors.push(r, g, b)
         indices.push(vi, vi + 2, vi + 1, vi, vi + 3, vi + 2)
         vi += 4
@@ -118,9 +131,12 @@ export class World {
     const floorGeo = new THREE.BufferGeometry()
     floorGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
     floorGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    floorGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
     floorGeo.setIndex(indices)
     floorGeo.computeVertexNormals()
-    const floorMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.05 })
+    const floorMat = new THREE.MeshStandardMaterial({
+      map: this.tex.floor, vertexColors: true, roughness: 0.95, metalness: 0.05
+    })
     this.dungeonGroup.add(new THREE.Mesh(floorGeo, floorMat))
 
     // walls: instanced boxes on solid tiles that touch a floor tile
@@ -139,7 +155,9 @@ export class World {
       }
     }
     const wallGeo = new THREE.BoxGeometry(1, WALL_HEIGHT, 1)
-    const wallMat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.08, transparent: true })
+    const wallMat = new THREE.MeshStandardMaterial({
+      map: this.tex.wall, roughness: 0.9, metalness: 0.08, transparent: true
+    })
     // X-ray fade: wall fragments sitting on the camera->hero sightline go
     // mostly transparent so the hero is never hidden behind a foreground wall
     wallMat.onBeforeCompile = (shader) => {
@@ -171,8 +189,9 @@ export class World {
     wallTiles.forEach(([tx, ty], i) => {
       m.makeTranslation(tx + 0.5, WALL_HEIGHT / 2, ty + 0.5)
       walls.setMatrixAt(i, m)
+      // near-white tints — the brick texture carries the tone, this varies it
       const n = tileNoise(tx * 3, ty * 7)
-      c.setRGB(0.16 + n * 0.05, 0.15 + n * 0.045, 0.17 + n * 0.05)
+      c.setRGB(0.78 + n * 0.24, 0.76 + n * 0.22, 0.8 + n * 0.24)
       walls.setColorAt(i, c)
     })
     walls.instanceMatrix.needsUpdate = true
@@ -195,6 +214,8 @@ export class World {
       this.torchPositions.push(new THREE.Vector3(t.x, 1.4, t.y))
     }
 
+    this.buildDecor(dungeon)
+
     // drifting dust motes for atmosphere
     if (this.dust) this.scene.remove(this.dust)
     const dustCount = 240
@@ -212,6 +233,128 @@ export class World {
     this.dungeonGroup.add(this.dust)
 
     this.scene.add(this.dungeonGroup)
+  }
+
+  // Set dressing: pillars, banners, bones, rubble, supply clutter. Purely
+  // cosmetic (no collision), placed against walls and in room corners so it
+  // never reads as a blocking obstacle. All placement derives from tileNoise,
+  // so every co-op client decorates the dungeon identically.
+  buildDecor (dungeon) {
+    const g = this.dungeonGroup
+    const grid = dungeon.grid
+    const size = dungeon.size
+    const isWall = (x, y) => x < 0 || y < 0 || x >= size || y >= size || grid[y][x] === '#'
+
+    // pillars in large rooms
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6e6a78, roughness: 0.9 })
+    const pillarGeo = new THREE.CylinderGeometry(0.2, 0.26, WALL_HEIGHT, 8)
+    const plinthGeo = new THREE.BoxGeometry(0.6, 0.2, 0.6)
+    for (const r of dungeon.rooms) {
+      if (r.w < 7 || r.h < 7) continue
+      const corners = [
+        [r.x + 1.6, r.y + 1.6], [r.x + r.w - 1.6, r.y + 1.6],
+        [r.x + 1.6, r.y + r.h - 1.6], [r.x + r.w - 1.6, r.y + r.h - 1.6]
+      ]
+      for (const [px, py] of corners) {
+        const col = new THREE.Mesh(pillarGeo, stoneMat)
+        col.position.set(px, WALL_HEIGHT / 2, py)
+        const plinth = new THREE.Mesh(plinthGeo, stoneMat)
+        plinth.position.set(px, 0.1, py)
+        const cap = plinth.clone()
+        cap.position.y = WALL_HEIGHT - 0.1
+        g.add(col, plinth, cap)
+      }
+    }
+
+    // heraldic banners on the far wall of rooms; the boss room gets a row
+    const bannerGeo = new THREE.PlaneGeometry(0.74, 1.5)
+    const bannerMat = new THREE.MeshStandardMaterial({
+      map: this.tex.banner, transparent: true, alphaTest: 0.4, roughness: 0.9, side: THREE.DoubleSide
+    })
+    for (const r of dungeon.rooms) {
+      const slots = r.boss ? [-2.2, 0, 2.2] : tileNoise(r.x * 5, r.y * 3) > 0.4 ? [0] : []
+      for (const off of slots) {
+        const bx = r.x + r.w / 2 + off
+        if (!isWall(Math.floor(bx), r.y - 1) || isWall(Math.floor(bx), r.y)) continue
+        const banner = new THREE.Mesh(bannerGeo, bannerMat)
+        banner.position.set(bx, 1.55, r.y + 0.03)
+        g.add(banner)
+      }
+    }
+
+    // scattered rubble & old bones along the walls (instanced)
+    const rocks = []
+    const bones = []
+    for (let ty = 0; ty < size; ty++) {
+      for (let tx = 0; tx < size; tx++) {
+        if (grid[ty][tx] === '#') continue
+        if (!(isWall(tx + 1, ty) || isWall(tx - 1, ty) || isWall(tx, ty + 1) || isWall(tx, ty - 1))) continue
+        const n = tileNoise(tx * 13.3 + 7, ty * 7.7 + 3)
+        if (n < 0.05) rocks.push([tx + 0.5, ty + 0.5, n])
+        else if (n < 0.085) bones.push([tx + 0.5, ty + 0.5, n])
+      }
+    }
+    const m = new THREE.Matrix4()
+    const pos = new THREE.Vector3()
+    const quat = new THREE.Quaternion()
+    const scl = new THREE.Vector3()
+    const euler = new THREE.Euler()
+
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x4c4954, roughness: 0.95, flatShading: true })
+    const rockInst = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(0.11, 0), rockMat, rocks.length * 3)
+    rocks.forEach(([x, y, n], i) => {
+      for (let k = 0; k < 3; k++) {
+        const a = n * 80 + k * 2.1
+        const s = 0.45 + tileNoise(x * 9 + k, y * 4 + k) * 0.75
+        pos.set(x + Math.cos(a) * 0.2, 0.08 * s, y + Math.sin(a) * 0.2)
+        quat.setFromEuler(euler.set(n * 9, a, k))
+        scl.setScalar(s)
+        m.compose(pos, quat, scl)
+        rockInst.setMatrixAt(i * 3 + k, m)
+      }
+    })
+    g.add(rockInst)
+
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0xcfc5ab, roughness: 0.8 })
+    const skullInst = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 8, 6), boneMat, bones.length)
+    const boneInst = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.22, 2, 5), boneMat, bones.length * 2)
+    bones.forEach(([x, y, n], i) => {
+      pos.set(x, 0.07, y)
+      quat.setFromEuler(euler.set(0, n * 30, 0))
+      scl.set(1, 0.85, 1.05)
+      m.compose(pos, quat, scl)
+      skullInst.setMatrixAt(i, m)
+      for (let k = 0; k < 2; k++) {
+        pos.set(x + (k ? 0.16 : -0.13), 0.035, y + (k ? -0.08 : 0.12))
+        quat.setFromEuler(euler.set(Math.PI / 2, 0, n * 20 + k * 1.9))
+        scl.setScalar(1)
+        m.compose(pos, quat, scl)
+        boneInst.setMatrixAt(i * 2 + k, m)
+      }
+    })
+    g.add(skullInst, boneInst)
+
+    // supply clutter tucked in a corner of the spawn room
+    const spawnRoom = dungeon.rooms.find(r => r.spawn)
+    if (spawnRoom) {
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a4226, roughness: 0.9 })
+      const bandMat = new THREE.MeshStandardMaterial({ color: 0x2e2a26, roughness: 0.6, metalness: 0.5 })
+      const cx = spawnRoom.x + 1.3
+      const cy = spawnRoom.y + 1.3
+      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 0.62), woodMat)
+      crate.position.set(cx, 0.31, cy)
+      crate.rotation.y = 0.3
+      const crate2 = crate.clone()
+      crate2.scale.setScalar(0.7)
+      crate2.position.set(cx + 0.75, 0.22, cy + 0.2)
+      crate2.rotation.y = 0.9
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 0.66, 10), woodMat)
+      barrel.position.set(cx + 0.25, 0.33, cy + 0.85)
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.275, 0.02, 6, 14), bandMat)
+      band.rotation.x = Math.PI / 2
+      band.position.copy(barrel.position)
+      g.add(crate, crate2, barrel, band)
+    }
   }
 
   // ---- per-frame ----

@@ -48,47 +48,117 @@ function setBarFraction (bar, frac) {
 
 // ---- mesh factories ----
 
+// a proper low-poly knight: animated legs, cuirass, pauldrons, cape,
+// visored helm with a plume, a kite-style round shield and a real sword
 function makeHero (colorIdx, isSelf) {
   const color = HERO_COLORS[colorIdx % HERO_COLORS.length]
   const group = new THREE.Group()
   const rig = new THREE.Group()
   group.add(rig)
 
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.3, 0.45, 4, 10),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.55 })
-  )
-  body.position.y = 0.62
-  rig.add(body)
+  const armorMat = new THREE.MeshStandardMaterial({ color: 0xaeb8c6, roughness: 0.34, metalness: 0.75 })
+  const mailMat = new THREE.MeshStandardMaterial({ color: 0x49505c, roughness: 0.55, metalness: 0.55 })
+  const clothMat = new THREE.MeshStandardMaterial({ color, roughness: 0.7 })
+  const capeMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color).multiplyScalar(0.72), roughness: 0.85, side: THREE.DoubleSide
+  })
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0xc9a04e, roughness: 0.35, metalness: 0.7 })
+  const leatherMat = new THREE.MeshStandardMaterial({ color: 0x4a3826, roughness: 0.85 })
 
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.22, 14, 12),
-    new THREE.MeshStandardMaterial({ color: 0x99a2ad, roughness: 0.35, metalness: 0.55 })
-  )
-  head.position.y = 1.16
-  rig.add(head)
+  // legs swing from hip pivots while running
+  const mkLeg = (side) => {
+    const hip = new THREE.Group()
+    hip.position.set(side * 0.14, 0.46, 0)
+    const thigh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.44, 0.17), mailMat)
+    thigh.position.y = -0.22
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.26), leatherMat)
+    boot.position.set(0, -0.42, 0.04)
+    hip.add(thigh, boot)
+    rig.add(hip)
+    return hip
+  }
+  const legL = mkLeg(-1)
+  const legR = mkLeg(1)
 
-  const plume = new THREE.Mesh(
-    new THREE.ConeGeometry(0.07, 0.26, 6),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.6 })
-  )
-  plume.position.y = 1.4
-  rig.add(plume)
+  // tunic skirt, cuirass, gold collar, belt with buckle, chest emblem
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.33, 0.26, 8), clothMat)
+  skirt.position.y = 0.56
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.29, 0.48, 8), armorMat)
+  torso.position.y = 0.88
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.23, 0.1, 8), trimMat)
+  collar.position.y = 1.13
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.08, 8), leatherMat)
+  belt.position.y = 0.67
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.04), trimMat)
+  buckle.position.set(0, 0.67, 0.29)
+  const emblem = new THREE.Mesh(new THREE.OctahedronGeometry(0.06, 0), trimMat)
+  emblem.position.set(0, 0.95, 0.26)
+  emblem.scale.z = 0.4
+  rig.add(skirt, torso, collar, belt, buckle, emblem)
 
-  // sword on a shoulder pivot, blade pointing forward (+z)
+  // pauldrons
+  for (const side of [-1, 1]) {
+    const pad = new THREE.Mesh(
+      new THREE.SphereGeometry(0.15, 10, 8, 0, Math.PI * 2, 0, Math.PI / 1.7), armorMat)
+    pad.position.set(side * 0.29, 1.06, 0)
+    pad.rotation.z = -side * 0.35
+    rig.add(pad)
+  }
+
+  // cape (sways with the walk cycle) — angled out so the steep camera sees
+  // it foreshortened behind the shoulders instead of covering the back
+  const cape = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.62), capeMat)
+  cape.position.set(0, 0.88, -0.24)
+  cape.rotation.x = 0.32
+  rig.add(cape)
+
+  // helm: dome, brim, visor slit, coloured plume
+  const helm = new THREE.Mesh(new THREE.SphereGeometry(0.2, 14, 12), armorMat)
+  helm.position.y = 1.34
+  helm.scale.y = 1.15
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.23, 0.06, 12), mailMat)
+  brim.position.y = 1.26
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.055, 0.07),
+    new THREE.MeshStandardMaterial({ color: 0x101216, roughness: 0.4 })
+  )
+  visor.position.set(0, 1.34, 0.17)
+  const plume = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.34, 6), clothMat)
+  plume.position.y = 1.62
+  plume.rotation.x = -0.12
+  rig.add(helm, brim, visor, plume)
+
+  // round shield on the left arm
+  const shield = new THREE.Group()
+  shield.position.set(-0.36, 0.9, 0.1)
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.05, 14), clothMat)
+  face.rotation.x = Math.PI / 2
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.028, 8, 18), trimMat)
+  const bossKnob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), trimMat)
+  bossKnob.position.z = 0.05
+  shield.add(face, rim, bossKnob)
+  shield.rotation.y = -0.45
+  rig.add(shield)
+
+  // sword arm on a shoulder pivot, blade pointing forward (+z)
   const swordPivot = new THREE.Group()
-  swordPivot.position.set(0.36, 0.82, 0.05)
-  const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.06, 0.78),
-    new THREE.MeshStandardMaterial({ color: 0xcfd6e0, roughness: 0.25, metalness: 0.8, emissive: 0x222933 })
-  )
-  blade.position.z = 0.5
-  const guard = new THREE.Mesh(
-    new THREE.BoxGeometry(0.2, 0.05, 0.06),
-    new THREE.MeshStandardMaterial({ color: 0x8a6a2e, roughness: 0.4, metalness: 0.6 })
-  )
-  guard.position.z = 0.12
-  swordPivot.add(blade, guard)
+  swordPivot.position.set(0.34, 0.98, 0.05)
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.11, 0.3), mailMat)
+  arm.position.z = 0.12
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.16, 6), leatherMat)
+  grip.rotation.x = Math.PI / 2
+  grip.position.z = 0.3
+  const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 8), trimMat)
+  pommel.position.z = 0.21
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.05, 0.05), trimMat)
+  guard.position.z = 0.4
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdde4ee, roughness: 0.22, metalness: 0.85, emissive: 0x232a36 })
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.035, 0.62), bladeMat)
+  blade.position.z = 0.73
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.026, 0.12, 4), bladeMat)
+  tip.rotation.x = Math.PI / 2
+  tip.position.z = 1.1
+  swordPivot.add(arm, grip, pommel, guard, blade, tip)
   swordPivot.rotation.x = 0.55
   rig.add(swordPivot)
 
@@ -103,10 +173,10 @@ function makeHero (colorIdx, isSelf) {
     group.add(ring)
   }
   const bar = healthBar(0.9)
-  bar.position.y = 1.72
+  bar.position.y = 1.95
   group.add(bar)
 
-  return { group, rig, parts: { swordPivot, body }, bar }
+  return { group, rig, parts: { swordPivot, legL, legR, cape }, bar }
 }
 
 function makeGrunt () {
@@ -287,9 +357,12 @@ export class Entities {
       rec.rig.rotation.x += (targetTilt - rec.rig.rotation.x) * 0.2
       rec.group.visible = true
 
-      // walk bob & dash stretch
-      const bob = s.moving && !s.d ? Math.sin(this.time * 11 + s.c * 2) * 0.05 : 0
-      rec.rig.position.y = bob
+      // walk cycle: bob, scissoring legs, swaying cape; dash stretch
+      const stride = s.moving && !s.d ? Math.sin(this.time * 11 + s.c * 2) : 0
+      rec.rig.position.y = Math.abs(stride) * 0.05
+      rec.parts.legL.rotation.x = stride * 0.7
+      rec.parts.legR.rotation.x = -stride * 0.7
+      rec.parts.cape.rotation.x = 0.32 + Math.abs(stride) * 0.22 + Math.sin(this.time * 2.2 + s.c) * 0.04
       const stretch = s.ds ? 1.18 : 1
       rec.rig.scale.set(2 - stretch, 1, stretch)
     }

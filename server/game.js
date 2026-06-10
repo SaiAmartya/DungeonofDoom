@@ -41,8 +41,6 @@ export class Game {
         attackCd: 0,
         windup: 0,
         windupTarget: null,
-        staggerT: 0,
-        staggerImmuneT: 0,
         dashLeft: 0,
         dashTimer: def.dashInterval || 0,
         dead: false
@@ -146,9 +144,10 @@ export class Game {
       const ang = Math.atan2(e.y - p.y, e.x - p.x)
       if (angleDiff(ang, p.facing) > PLAYER.ATTACK_ARC) continue
       this.damageEnemy(e, PLAYER.ATTACK_DAMAGE, p)
-      // knockback (bosses stand their ground)
+      // minor knockback (bosses stand their ground) — small enough that an
+      // enemy stays in striking reach, so attack-spam can't keep it away
       if (e.type !== 'boss' && !e.dead) {
-        const kb = 0.85
+        const kb = 0.3
         const moved = moveCircle(this.dungeon.grid, e.x, e.y, e.r, Math.cos(ang) * kb, Math.sin(ang) * kb)
         e.x = moved.x
         e.y = moved.y
@@ -170,13 +169,8 @@ export class Game {
   damageEnemy (enemy, amount, source) {
     enemy.hp -= amount
     enemy.aggro = true
-    // stagger: interrupt any windup and stop the enemy briefly — but with
-    // an immunity window so attack-spam cannot stun-lock an enemy forever
-    if (enemy.type !== 'boss' && enemy.staggerImmuneT <= 0) {
-      enemy.windup = 0
-      enemy.staggerT = 0.4
-      enemy.staggerImmuneT = 1.3
-    }
+    // no hit-stun: enemies keep winding up and attacking through damage,
+    // so standing still and trading blows is a real cost, not an exploit
     this.events.push({ k: 'ehit', id: enemy.id, dmg: amount, x: enemy.x, y: enemy.y })
     if (enemy.hp > 0) return
 
@@ -263,7 +257,6 @@ export class Game {
       if (e.dead || this.over) continue
       const def = ENEMY_TYPES[e.type]
       e.attackCd = Math.max(0, e.attackCd - dt)
-      e.staggerImmuneT = Math.max(0, e.staggerImmuneT - dt)
 
       // find nearest living player
       let target = null
@@ -275,12 +268,6 @@ export class Game {
       if (!target) continue
       if (best < def.aggro) e.aggro = true
       if (!e.aggro) continue
-
-      // staggered by a player hit: do nothing this frame
-      if (e.staggerT > 0) {
-        e.staggerT -= dt
-        continue
-      }
 
       // mid-windup: hold position, then strike if the player didn't escape
       if (e.windup > 0) {

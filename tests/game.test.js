@@ -88,7 +88,7 @@ test('enemies chase and damage players; player death ends a solo run', () => {
   assert.ok(game.over, 'solo run is over when the only player dies')
 })
 
-test('enemy attacks are telegraphed and staggered by player hits', () => {
+test('enemy attacks are telegraphed and cannot be paused by attack-spam', () => {
   const game = new Game('TEST', { solo: true })
   const p = game.addPlayer('p1')
   const enemy = game.enemies.find(e => e.type === 'grunt')
@@ -101,22 +101,19 @@ test('enemy attacks are telegraphed and staggered by player hits', () => {
   assert.equal(p.hp, p.maxHp, 'no instant damage — attack telegraphed')
   assert.ok(enemy.windup > 0, 'enemy is winding up')
 
-  // a player hit interrupts the windup (stagger)
+  // a player hit no longer interrupts the windup — no hit-stun pause
   p.facing = Math.atan2(enemy.y - p.y, enemy.x - p.x)
-  p.attackCd = 0
   game.handleAttack('p1')
-  assert.equal(enemy.windup, 0, 'windup cancelled by stagger')
-  assert.ok(enemy.staggerT > 0, 'enemy staggered')
+  assert.ok(enemy.windup > 0, 'windup survives being hit')
 
-  // but spamming attacks cannot stun-lock: stagger immunity blocks a re-stagger
-  enemy.staggerT = 0
-  p.x = enemy.x - 1 // knockback moved the enemy; stay in range
-  p.y = enemy.y
-  p.facing = 0
-  p.attackCd = 0
-  game.handleAttack('p1')
-  assert.equal(enemy.staggerT, 0, 'second immediate hit does not re-stagger')
-  assert.ok(enemy.staggerImmuneT > 0, 'immunity window active')
+  // face-tanking while spamming attacks is a trade: the strike still lands
+  for (let i = 0; i < 60 && p.hp === p.maxHp; i++) {
+    game.handleAttack('p1') // no-ops while on cooldown
+    p.x = enemy.x + 0.5     // stay pinned in contact despite knockback
+    p.y = enemy.y
+    game.tick(1 / 30)
+  }
+  assert.ok(p.hp < p.maxHp, 'spamming attacks does not prevent the enemy striking')
 })
 
 test('incoming attacks on one player are rate-limited, even when swarmed', () => {
