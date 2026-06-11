@@ -56,8 +56,30 @@ const input = new Input({
     socket.emit('dash')
     audio.dash()
   },
-  onMute: () => hud.toast(audio.toggleMute() ? 'Sound muted' : 'Sound on')
+  onMute: () => hud.toast(audio.toggleMute() ? 'Sound muted' : 'Sound on'),
+  onMusic: () => hud.toast(toggleMusic() ? 'Music on' : 'Music off')
 })
+
+// ---- background music toggle (persisted) ----
+
+const musicWanted = () => localStorage.getItem('dod-music') !== 'off'
+
+function updateMusicLabel () {
+  $('btn-music').innerHTML = '&#9835; Music: ' + (musicWanted() ? 'On' : 'Off')
+}
+
+// Toggles the *preference*, then makes reality match. (Autoplay rules mean
+// music may not actually start until a click/keypress like this one.)
+function toggleMusic () {
+  const want = !musicWanted()
+  localStorage.setItem('dod-music', want ? 'on' : 'off')
+  want ? audio.startMusic() : audio.stopMusic()
+  updateMusicLabel()
+  return want
+}
+
+$('btn-music').addEventListener('click', toggleMusic)
+updateMusicLabel()
 
 // ---- menu wiring ----
 
@@ -90,6 +112,7 @@ function handleEnterGame (resp) {
   setMenuError('')
   state.selfId = resp.selfId
   audio.ensure() // user gesture: unlock audio
+  if (musicWanted()) audio.startMusic() // no-op if already playing
   setupWorld(resp.init)
 }
 
@@ -543,4 +566,4 @@ setInterval(() => {
 }, 100)
 
 // debug handle for E2E tests & troubleshooting
-window.DOD = { state, input, socket, world, entities, effects }
+window.DOD = { state, input, socket, world, entities, effects, audio }

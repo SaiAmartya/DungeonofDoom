@@ -1,9 +1,33 @@
 // Tiny WebAudio synthesizer — all SFX generated procedurally, no assets.
 
+// A 16s generative loop in A minor: slow detuned pads over a sub drone,
+// a sparse plucked motif drowned in cavern echo, and a deep boom on each
+// chord change. Chords as fundamental frequencies (Am, F, Dm, E).
+const MUSIC = {
+  step: 0.5, // seconds per melody step; 8 steps per chord, 4 chords per loop
+  chords: [
+    [110.0, 130.8, 164.8], // A minor
+    [87.3, 110.0, 130.8],  // F major
+    [73.4, 87.3, 110.0],   // D minor
+    [82.4, 103.8, 123.5]   // E major
+  ],
+  // A harmonic minor, indices into this scale (-1 = rest)
+  scale: [220.0, 246.9, 261.6, 293.7, 329.6, 349.2, 415.3, 440.0, 523.3],
+  melody: [
+    7, -1, -1, 4, -1, -1, 2, -1,   // Am: A4 . . E4 . . C4 .
+    -1, -1, 5, -1, 7, -1, -1, -1,  // F:  . . F4 . A4 . . .
+    3, -1, -1, 5, -1, 4, -1, -1,   // Dm: D4 . . F4 . E4 . .
+    6, -1, -1, 8, -1, -1, 4, -1    // E:  G#4 . . C5 . . E4 .
+  ]
+}
+
 class AudioFx {
   constructor () {
     this.ctx = null
     this.muted = false
+    this.musicOn = false
+    this.musicGain = null
+    this.musicTimer = null
   }
 
   ensure () {
@@ -26,7 +50,129 @@ class AudioFx {
 
   toggleMute () {
     this.muted = !this.muted
+    if (this.musicOn && this.musicGain) {
+      const t = this.ctx.currentTime
+      this.musicGain.gain.cancelScheduledValues(t)
+      this.musicGain.gain.setValueAtTime(this.muted ? 0.0001 : 0.5, t)
+    }
     return this.muted
+  }
+
+  // ---- background music (generative dungeon ambience) ----
+
+  toggleMusic () {
+    this.musicOn ? this.stopMusic() : this.startMusic()
+    return this.musicOn
+  }
+
+  startMusic () {
+    const ctx = this.ensure()
+    if (!ctx || this.musicOn) return
+    this.musicOn = true
+
+    this.musicGain = ctx.createGain()
+    this.musicGain.gain.setValueAtTime(0.0001, ctx.currentTime)
+    this.musicGain.gain.exponentialRampToValueAtTime(
+      this.muted ? 0.0001 : 0.5, ctx.currentTime + 2.5)
+    this.musicGain.connect(this.master)
+
+    // cavernous echo bus for the plucked motif
+    this.musicEcho = ctx.createDelay(1)
+    this.musicEcho.delayTime.value = 0.52
+    const feedback = ctx.createGain()
+    feedback.gain.value = 0.38
+    this.musicEcho.connect(feedback).connect(this.musicEcho)
+    this.musicEcho.connect(this.musicGain)
+
+    this.musicStep = 0
+    this.musicNext = ctx.currentTime + 0.1
+    this.musicTimer = setInterval(() => this.scheduleMusic(), 150)
+  }
+
+  stopMusic () {
+    if (!this.musicOn) return
+    this.musicOn = false
+    clearInterval(this.musicTimer)
+    this.musicTimer = null
+    const gain = this.musicGain
+    this.musicGain = null
+    if (!gain) return
+    const t = this.ctx.currentTime
+    gain.gain.cancelScheduledValues(t)
+    gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), t)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.8)
+    setTimeout(() => gain.disconnect(), 1000) // takes scheduled notes with it
+  }
+
+  // schedule a beat or so ahead so timer jitter never gaps the loop
+  scheduleMusic () {
+    const ctx = this.ctx
+    if (!ctx || !this.musicOn) return
+    while (this.musicNext < ctx.currentTime + 1.2) {
+      this.musicAtStep(this.musicStep, this.musicNext)
+      this.musicStep = (this.musicStep + 1) % MUSIC.melody.length
+      this.musicNext += MUSIC.step
+    }
+  }
+
+  musicAtStep (step, t) {
+    const chordLen = 8 * MUSIC.step
+    if (step % 8 === 0) {
+      const chord = MUSIC.chords[(step / 8) | 0]
+      for (const freq of chord) this.padNote(freq, t, chordLen + 1.6, 0.07)
+      this.padNote(chord[0] / 2, t, chordLen + 1.6, 0.11, 'sine') // sub drone
+      this.boom(t)
+    }
+    const note = MUSIC.melody[step]
+    // occasional dropped note keeps the loop from feeling mechanical
+    if (note >= 0 && Math.random() > 0.12) this.pluck(MUSIC.scale[note], t)
+  }
+
+  padNote (freq, t, dur, vol, type = 'sawtooth') {
+    const ctx = this.ctx
+    const osc = ctx.createOscillator()
+    osc.type = type
+    osc.frequency.value = freq
+    osc.detune.value = (Math.random() - 0.5) * 14
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = 420
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.0001, t)
+    gain.gain.exponentialRampToValueAtTime(vol, t + dur * 0.35)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+    osc.connect(filter).connect(gain).connect(this.musicGain)
+    osc.start(t)
+    osc.stop(t + dur + 0.05)
+  }
+
+  pluck (freq, t, vol = 0.16) {
+    const ctx = this.ctx
+    const osc = ctx.createOscillator()
+    osc.type = 'triangle'
+    osc.frequency.value = freq
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(vol, t)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.1)
+    osc.connect(gain)
+    gain.connect(this.musicGain)
+    gain.connect(this.musicEcho)
+    osc.start(t)
+    osc.stop(t + 1.2)
+  }
+
+  boom (t) {
+    const ctx = this.ctx
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(55, t)
+    osc.frequency.exponentialRampToValueAtTime(27, t + 0.9)
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.4, t)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.1)
+    osc.connect(gain).connect(this.musicGain)
+    osc.start(t)
+    osc.stop(t + 1.2)
   }
 
   tone ({ from, to, dur, type = 'sine', vol = 0.5, delay = 0 }) {

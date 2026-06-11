@@ -2,12 +2,13 @@
 // Screen-up is world -y (north); screen-right is world +x.
 
 export class Input {
-  constructor ({ onAttack, onDash, onMute }) {
+  constructor ({ onAttack, onDash, onMute, onMusic }) {
     this.keys = new Set()
     this.joyVec = { x: 0, y: 0 }
     this.onAttack = onAttack
     this.onDash = onDash
     this.onMute = onMute
+    this.onMusic = onMusic
     this.enabled = false
 
     window.addEventListener('keydown', (e) => {
@@ -18,6 +19,7 @@ export class Input {
       if (k === ' ' || k === 'j') { e.preventDefault(); this.onAttack() }
       if (k === 'shift' || k === 'k') this.onDash()
       if (k === 'm') this.onMute()
+      if (k === 'b') this.onMusic()
     })
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()))
     window.addEventListener('blur', () => this.keys.clear())
