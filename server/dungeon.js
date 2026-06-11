@@ -112,25 +112,84 @@ export function generateDungeon (roomCount = 8) {
     for (const [tx, ty] of inset) torches.push({ x: tx + 0.5, y: ty + 0.5 })
   }
 
-  // --- 6. spawn points for enemies and pickups ---
+  // --- 6. solid prop obstacles (authoritative — players collide with these) ---
+  // {x, y, r, tall, kind}. tall props also block projectiles; low crates and
+  // barrels are chest-height cover you can shoot a sniper bolt over.
+  const obstacles = []
+
+  // stone pillars in the corners of every large room
+  for (const room of rooms) {
+    if (room.w < 7 || room.h < 7) continue
+    const corners = [
+      [room.x + 1.6, room.y + 1.6], [room.x + room.w - 1.6, room.y + 1.6],
+      [room.x + 1.6, room.y + room.h - 1.6], [room.x + room.w - 1.6, room.y + room.h - 1.6]
+    ]
+    for (const [px, py] of corners) {
+      obstacles.push({ x: px, y: py, r: 0.3, tall: true, kind: 'pillar' })
+    }
+  }
+
+  // supply cluster in the spawn room (kept off the corner pillars)
+  const spawnR = rooms[0]
+  const sx = spawnR.x + spawnR.w / 2 - 2
+  const sy = spawnR.y + 1.3
+  obstacles.push(
+    { x: sx, y: sy, r: 0.38, tall: false, kind: 'crate' },
+    { x: sx + 0.75, y: sy + 0.2, r: 0.28, tall: false, kind: 'crateSmall' },
+    { x: sx + 0.25, y: sy + 0.85, r: 0.3, tall: false, kind: 'barrel' }
+  )
+
+  // scattered cover crates in combat rooms — duck behind these when a
+  // Deadeye draws a bead on you
+  for (const room of rooms) {
+    if (room.spawn || room.boss || Math.random() > 0.55) continue
+    const n = 1 + randInt(2)
+    for (let i = 0; i < n; i++) {
+      for (let tries = 0; tries < 10; tries++) {
+        const x = room.x + 1.8 + Math.random() * (room.w - 3.6)
+        const y = room.y + 1.8 + Math.random() * (room.h - 3.6)
+        const cx = room.x + room.w / 2
+        const cy = room.y + room.h / 2
+        if ((x - cx) ** 2 + (y - cy) ** 2 < 2.2 ** 2) continue
+        if (obstacles.some(o => (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + 1.1) ** 2)) continue
+        obstacles.push({
+          x, y, r: 0.36, tall: false, kind: Math.random() < 0.6 ? 'crate' : 'barrel'
+        })
+        break
+      }
+    }
+  }
+
+  // --- 7. spawn points for enemies and pickups (clear of obstacles) ---
   const enemySpawns = []
   const pickupSpawns = []
-  const floorTileIn = (room) => ({
-    x: room.x + 1 + randInt(room.w - 2) + 0.5,
-    y: room.y + 1 + randInt(room.h - 2) + 0.5
-  })
+  const clearOf = (x, y, r) =>
+    obstacles.every(o => (x - o.x) ** 2 + (y - o.y) ** 2 > (o.r + r) ** 2)
+  const floorTileIn = (room) => {
+    for (let tries = 0; tries < 14; tries++) {
+      const x = room.x + 1 + randInt(room.w - 2) + 0.5
+      const y = room.y + 1 + randInt(room.h - 2) + 0.5
+      if (clearOf(x, y, 0.8)) return { x, y }
+    }
+    return { x: room.x + room.w / 2, y: room.y + room.h / 2 }
+  }
 
   for (const room of rooms) {
     if (room.spawn) continue
     if (room.boss) {
       enemySpawns.push({ type: 'boss', x: room.x + room.w / 2, y: room.y + room.h / 2, room })
       enemySpawns.push({ type: 'grunt', ...floorTileIn(room) })
-      enemySpawns.push({ type: 'grunt', ...floorTileIn(room) })
+      enemySpawns.push({ type: 'warlock', ...floorTileIn(room) })
+      enemySpawns.push({ type: 'archer', ...floorTileIn(room) })
       continue
     }
     const count = Math.min(2 + room.d, 4)
     for (let i = 0; i < count; i++) {
-      const type = room.d >= 2 && Math.random() < 0.35 ? 'brute' : 'grunt'
+      const roll = Math.random()
+      let type = 'grunt'
+      if (room.d >= 2 && roll < 0.25) type = 'brute'
+      else if (room.d >= 2 && roll < 0.45) type = 'archer'
+      else if (room.d >= 1 && roll < 0.7) type = 'warlock'
       enemySpawns.push({ type, ...floorTileIn(room) })
     }
     if (Math.random() < 0.55) pickupSpawns.push({ type: 'heart', ...floorTileIn(room) })
@@ -146,6 +205,7 @@ export function generateDungeon (roomCount = 8) {
     })),
     edges,
     torches,
+    obstacles,
     spawnX: spawnRoom.x + spawnRoom.w / 2,
     spawnY: spawnRoom.y + spawnRoom.h / 2,
     enemySpawns,

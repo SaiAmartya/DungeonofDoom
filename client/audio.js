@@ -95,6 +95,16 @@ class AudioFx {
     notes.forEach((n, i) => this.tone({ from: n, to: n * 0.97, dur: 0.4, type: 'sawtooth', vol: 0.3, delay: i * 0.22 }))
   }
   join () { this.tone({ from: 660, to: 880, dur: 0.18, type: 'triangle', vol: 0.3 }) }
+  cast () {
+    this.tone({ from: 720, to: 180, dur: 0.25, type: 'sawtooth', vol: 0.2 })
+    this.whoosh({ from: 1800, to: 420, dur: 0.2, vol: 0.2 })
+  }
+  arrow () {
+    this.whoosh({ from: 5200, to: 900, dur: 0.12, vol: 0.4 })
+    this.tone({ from: 1300, to: 220, dur: 0.08, type: 'square', vol: 0.15 })
+  }
+  aim () { this.tone({ from: 220, to: 460, dur: 0.55, type: 'sine', vol: 0.13 }) }
+  shatter () { this.whoosh({ from: 2800, to: 2000, dur: 0.08, vol: 0.16 }) }
 }
 
 export const audio = new AudioFx()

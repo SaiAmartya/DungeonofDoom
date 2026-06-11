@@ -3,8 +3,17 @@
 
 import {
   yawFromFacing, setBarFraction,
-  makeHero, makeGrunt, makeBrute, makeBoss, makePickup
+  makeHero, makeGrunt, makeBrute, makeWarlock, makeArcher, makeBoss,
+  makePickup, makeBolt
 } from './models.js'
+
+const ENEMY_FACTORIES = {
+  boss: makeBoss,
+  brute: makeBrute,
+  warlock: makeWarlock,
+  archer: makeArcher,
+  grunt: makeGrunt
+}
 
 export class Entities {
   constructor (scene) {
@@ -12,6 +21,7 @@ export class Entities {
     this.players = new Map() // id -> record
     this.enemies = new Map()
     this.pickups = new Map()
+    this.bolts = new Map()   // id -> projectile group
     this.dying = []          // death animations in flight
     this.enemyDefs = new Map()
     this.time = 0
@@ -21,10 +31,12 @@ export class Entities {
     for (const rec of this.players.values()) this.scene.remove(rec.group)
     for (const rec of this.enemies.values()) this.scene.remove(rec.group)
     for (const g of this.pickups.values()) this.scene.remove(g)
+    for (const g of this.bolts.values()) this.scene.remove(g)
     for (const d of this.dying) this.scene.remove(d.group)
     this.players.clear()
     this.enemies.clear()
     this.pickups.clear()
+    this.bolts.clear()
     this.dying = []
     this.enemyDefs = new Map(enemyDefs.map(d => [d.id, d]))
   }
@@ -75,7 +87,7 @@ export class Entities {
       let rec = this.enemies.get(s.id)
       if (!rec) {
         const def = this.enemyDefs.get(s.id) || { type: 'grunt', maxHp: 50 }
-        rec = def.type === 'boss' ? makeBoss() : def.type === 'brute' ? makeBrute() : makeGrunt()
+        rec = (ENEMY_FACTORIES[def.type] || makeGrunt)()
         rec.type = def.type
         rec.maxHp = def.maxHp
         rec.flashT = 0
@@ -138,6 +150,30 @@ export class Entities {
       if (!present.has(id)) {
         this.scene.remove(g)
         this.pickups.delete(id)
+      }
+    }
+  }
+
+  // live projectiles: [{id, x, y, a(ngle), c(olor kind)}]
+  syncBolts (list) {
+    const present = new Set()
+    for (const b of list) {
+      present.add(b.id)
+      let g = this.bolts.get(b.id)
+      if (!g) {
+        g = makeBolt(b.c)
+        this.scene.add(g)
+        this.bolts.set(b.id, g)
+      }
+      g.position.set(b.x, 0, b.y)
+      g.userData.spin.rotation.y = yawFromFacing(b.a)
+      // hexbolts wobble in flight; tracers fly dead straight
+      if (b.c !== 'a') g.userData.spin.position.x = Math.sin(this.time * 18 + b.x) * 0.04
+    }
+    for (const [id, g] of this.bolts) {
+      if (!present.has(id)) {
+        this.scene.remove(g)
+        this.bolts.delete(id)
       }
     }
   }

@@ -235,34 +235,48 @@ export class World {
     this.scene.add(this.dungeonGroup)
   }
 
-  // Set dressing: pillars, banners, bones, rubble, supply clutter. Purely
-  // cosmetic (no collision), placed against walls and in room corners so it
-  // never reads as a blocking obstacle. All placement derives from tileNoise,
-  // so every co-op client decorates the dungeon identically.
+  // Set dressing. Solid props (pillars, crates, barrels) come from the
+  // server's obstacle list so what you see is exactly what you collide with;
+  // banners, bones and rubble stay cosmetic and derive from tileNoise, so
+  // every co-op client decorates the dungeon identically.
   buildDecor (dungeon) {
     const g = this.dungeonGroup
     const grid = dungeon.grid
     const size = dungeon.size
     const isWall = (x, y) => x < 0 || y < 0 || x >= size || y >= size || grid[y][x] === '#'
 
-    // pillars in large rooms
+    // authoritative solid props
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x6e6a78, roughness: 0.9 })
-    const pillarGeo = new THREE.CylinderGeometry(0.2, 0.26, WALL_HEIGHT, 8)
-    const plinthGeo = new THREE.BoxGeometry(0.6, 0.2, 0.6)
-    for (const r of dungeon.rooms) {
-      if (r.w < 7 || r.h < 7) continue
-      const corners = [
-        [r.x + 1.6, r.y + 1.6], [r.x + r.w - 1.6, r.y + 1.6],
-        [r.x + 1.6, r.y + r.h - 1.6], [r.x + r.w - 1.6, r.y + r.h - 1.6]
-      ]
-      for (const [px, py] of corners) {
-        const col = new THREE.Mesh(pillarGeo, stoneMat)
-        col.position.set(px, WALL_HEIGHT / 2, py)
-        const plinth = new THREE.Mesh(plinthGeo, stoneMat)
-        plinth.position.set(px, 0.1, py)
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a4226, roughness: 0.9 })
+    const bandMat = new THREE.MeshStandardMaterial({ color: 0x2e2a26, roughness: 0.6, metalness: 0.5 })
+    for (const o of dungeon.obstacles || []) {
+      const twist = tileNoise(o.x * 11, o.y * 17) * 1.4
+      if (o.kind === 'pillar') {
+        const col = new THREE.Mesh(
+          new THREE.CylinderGeometry(o.r * 0.72, o.r * 0.92, WALL_HEIGHT, 8), stoneMat)
+        col.position.set(o.x, WALL_HEIGHT / 2, o.y)
+        const plinth = new THREE.Mesh(new THREE.BoxGeometry(o.r * 2, 0.2, o.r * 2), stoneMat)
+        plinth.position.set(o.x, 0.1, o.y)
         const cap = plinth.clone()
         cap.position.y = WALL_HEIGHT - 0.1
         g.add(col, plinth, cap)
+      } else if (o.kind === 'barrel') {
+        const barrel = new THREE.Mesh(
+          new THREE.CylinderGeometry(o.r * 0.88, o.r, 0.66, 10), woodMat)
+        barrel.position.set(o.x, 0.33, o.y)
+        const band = new THREE.Mesh(new THREE.TorusGeometry(o.r * 0.92, 0.02, 6, 14), bandMat)
+        band.rotation.x = Math.PI / 2
+        band.position.set(o.x, 0.33, o.y)
+        g.add(barrel, band)
+      } else { // crate / crateSmall
+        const s = o.r * 1.7
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), woodMat)
+        crate.position.set(o.x, s / 2, o.y)
+        crate.rotation.y = twist
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(s * 1.04, s * 0.16, s * 1.04), bandMat)
+        brace.position.set(o.x, s / 2, o.y)
+        brace.rotation.y = twist
+        g.add(crate, brace)
       }
     }
 
@@ -333,28 +347,6 @@ export class World {
       }
     })
     g.add(skullInst, boneInst)
-
-    // supply clutter tucked in a corner of the spawn room
-    const spawnRoom = dungeon.rooms.find(r => r.spawn)
-    if (spawnRoom) {
-      const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a4226, roughness: 0.9 })
-      const bandMat = new THREE.MeshStandardMaterial({ color: 0x2e2a26, roughness: 0.6, metalness: 0.5 })
-      const cx = spawnRoom.x + 1.3
-      const cy = spawnRoom.y + 1.3
-      const crate = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 0.62), woodMat)
-      crate.position.set(cx, 0.31, cy)
-      crate.rotation.y = 0.3
-      const crate2 = crate.clone()
-      crate2.scale.setScalar(0.7)
-      crate2.position.set(cx + 0.75, 0.22, cy + 0.2)
-      crate2.rotation.y = 0.9
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 0.66, 10), woodMat)
-      barrel.position.set(cx + 0.25, 0.33, cy + 0.85)
-      const band = new THREE.Mesh(new THREE.TorusGeometry(0.275, 0.02, 6, 14), bandMat)
-      band.rotation.x = Math.PI / 2
-      band.position.copy(barrel.position)
-      g.add(crate, crate2, barrel, band)
-    }
   }
 
   // ---- per-frame ----

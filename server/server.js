@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { Server } from 'socket.io'
 
 import { Game } from './game.js'
+import { topTimes, submitTime } from './leaderboard.js'
 import { TICK_RATE } from '../shared/sim.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -23,6 +24,12 @@ app.use('/shared', express.static(path.join(__dirname, '..', 'shared')))
 // lightweight health check — used by uptime monitors / keep-alive pings
 app.get('/healthz', (req, res) => {
   res.json({ ok: true, games: games.size, uptime: Math.round(process.uptime()) })
+})
+
+// top solo clear times (read-only; submissions go through the socket so the
+// server can tie them to an authoritative victory)
+app.get('/leaderboard', (req, res) => {
+  res.json({ ok: true, top: topTimes() })
 })
 
 // ---- lobby management ----
@@ -87,6 +94,22 @@ io.on('connection', (socket) => {
   socket.on('input', (data) => currentGame()?.handleInput(socket.id, data || {}))
   socket.on('attack', () => currentGame()?.handleAttack(socket.id))
   socket.on('dash', () => currentGame()?.handleDash(socket.id))
+
+  // Leaderboard submission. The client only supplies a display name; the
+  // time comes from the server's own clock on the player's current victory.
+  socket.on('submitScore', (opts, ack) => {
+    if (typeof ack !== 'function') return
+    const game = currentGame()
+    if (!game || !game.solo || !game.victory || !Number.isFinite(game.victoryMs)) {
+      return ack({ ok: false, error: 'No solo victory to submit.' })
+    }
+    if (game.scoreSubmitted) {
+      return ack({ ok: false, error: 'This run is already on the board.' })
+    }
+    game.scoreSubmitted = true
+    const result = submitTime(opts?.name, game.victoryMs)
+    ack({ ...result, top: topTimes() })
+  })
 
   socket.on('restart', () => {
     const game = currentGame()

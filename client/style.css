@@ -222,6 +222,58 @@ html, body {
 .menu-error { color: #ff7b6e; font-size: 13px; min-height: 18px; margin: 14px 0 0; }
 .controls-hint { color: #6e685c; font-size: 11px; margin-top: 26px; line-height: 1.7; }
 
+/* ---------- leaderboard ---------- */
+#leaderboard {
+  margin: 18px auto 0;
+  width: min(340px, 80vw);
+  background: var(--panel);
+  border: 1px solid rgba(232, 181, 77, 0.3);
+  border-radius: 6px;
+  padding: 12px 18px 14px;
+}
+.lb-title {
+  font-family: 'Cinzel', serif;
+  font-size: 13px; letter-spacing: 3px;
+  color: var(--gold);
+  margin-bottom: 8px;
+}
+#lb-list {
+  list-style: none;
+  margin: 0; padding: 0;
+  counter-reset: lb;
+  font-size: 12px;
+  max-height: 168px; overflow-y: auto;
+}
+#lb-list li {
+  counter-increment: lb;
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 2.5px 0;
+}
+#lb-list li::before {
+  content: counter(lb) '.';
+  color: #6e685c; width: 20px; text-align: right; margin-right: 8px;
+}
+#lb-list li:first-child .lb-name, #lb-list li:first-child .lb-time { color: var(--gold); }
+.lb-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-time { color: #9b9484; }
+.lb-empty { color: #6e685c; justify-content: center !important; }
+.lb-empty::before { content: '' !important; width: 0 !important; margin: 0 !important; }
+
+/* victory name submission */
+#score-submit { display: flex; gap: 8px; justify-content: center; margin-bottom: 24px; }
+#score-name {
+  width: 200px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 15px; letter-spacing: 2px; text-align: center;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(232, 181, 77, 0.4);
+  border-radius: 5px;
+  outline: none;
+}
+#score-name:focus { border-color: var(--gold); }
+
 /* ---------- overlay ---------- */
 #overlay {
   position: fixed; inset: 0; z-index: 15;

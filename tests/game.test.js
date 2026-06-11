@@ -2,10 +2,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 import { generateDungeon } from '../server/dungeon.js'
 import { Game } from '../server/game.js'
-import { circleHitsWall, moveCircle, PLAYER } from '../shared/sim.js'
+import { circleHitsWall, circleHitsObstacle, moveCircle, PLAYER, ENEMY_TYPES } from '../shared/sim.js'
 
 test('dungeon is fully connected and has exactly one boss + one spawn room', () => {
   for (let run = 0; run < 20; run++) {
@@ -144,6 +147,97 @@ test('dash grants i-frames', () => {
   p.dashLeft = PLAYER.DASH_DURATION
   game.damagePlayer(p, 50)
   assert.equal(p.hp, p.maxHp, 'no damage taken while dashing')
+})
+
+test('players collide with prop obstacles (pillars, crates)', () => {
+  const grid = ['#######', '#.....#', '#.....#', '#.....#', '#######']
+  const obstacles = [{ x: 3.5, y: 2.5, r: 0.3, tall: true, kind: 'pillar' }]
+  // walk straight at the pillar — must stop short, never phase through
+  const res = moveCircle(grid, 1.5, 2.5, 0.32, 4, 0, obstacles)
+  assert.ok(res.x < 3.5 - 0.3, `stopped before the pillar (x=${res.x})`)
+  assert.ok(!circleHitsObstacle(obstacles, res.x, res.y, 0.32), 'resting position is clear')
+  // low props block movement but not projectiles; tall props block both
+  const crate = [{ x: 3.5, y: 2.5, r: 0.36, tall: false, kind: 'crate' }]
+  assert.ok(circleHitsObstacle(crate, 3.5, 2.5, 0.12), 'crate blocks movers')
+  assert.ok(!circleHitsObstacle(crate, 3.5, 2.5, 0.12, true), 'bolts fly over a crate')
+})
+
+test('generated obstacles never overlap enemy or pickup spawns', () => {
+  for (let run = 0; run < 10; run++) {
+    const d = generateDungeon()
+    assert.ok(d.obstacles.length > 0, 'dungeon has solid props')
+    for (const s of [...d.enemySpawns, ...d.pickupSpawns]) {
+      if (s.type === 'boss') continue // boss spawns at room centre, kept clear
+      assert.ok(!circleHitsObstacle(d.obstacles, s.x, s.y, 0.6),
+        `spawn at ${s.x},${s.y} clear of props`)
+    }
+    assert.ok(!circleHitsObstacle(d.obstacles, d.spawnX, d.spawnY, 0.8),
+      'player spawn point clear of props')
+  }
+})
+
+test('archer telegraphs an aim, then fires a fast tracer bolt that hits', () => {
+  const game = new Game('TEST', { solo: true })
+  const p = game.addPlayer('p1')
+
+  // stage a deadeye duel across the spawn room: archer left, player right
+  const room = game.dungeon.rooms.find(r => r.spawn)
+  const cy = room.y + room.h / 2 + 0.5
+  const archer = game.enemies[0]
+  archer.type = 'archer'
+  archer.r = ENEMY_TYPES.archer.radius
+  archer.hp = archer.maxHp = ENEMY_TYPES.archer.hp
+  archer.x = room.x + 1.5
+  archer.y = cy
+  archer.aggro = true
+  archer.attackCd = 0
+  p.x = room.x + 7.5
+  p.y = cy
+  // park every other enemy far away and inert
+  for (const e of game.enemies.slice(1)) { e.dead = true }
+
+  game.tick(1 / 30)
+  const aim = game.events.find(ev => ev.k === 'ewindup' && ev.w === 'aim')
+  assert.ok(aim, 'aim telegraph event emitted')
+  assert.equal(aim.t, 'p1', 'telegraph names the marked player')
+  assert.ok(archer.windup > 0, 'archer is drawing a bead, not striking instantly')
+
+  // hold still through the aim and the bolt flight — the shot must land
+  for (let i = 0; i < 90 && p.hp === p.maxHp; i++) game.tick(1 / 30)
+  assert.ok(game.events.some(ev => ev.k === 'eshoot'), 'shot fired')
+  assert.equal(p.maxHp - p.hp, ENEMY_TYPES.archer.damage, 'tracer bolt damage landed')
+})
+
+test('snapshots carry live projectiles for the client to render', () => {
+  const game = new Game('TEST', { solo: true })
+  game.addPlayer('p1')
+  game.spawnBolt(game.enemies[0], 0, 8, 10, 'w')
+  const snap = game.snapshot()
+  assert.equal(snap.b.length, 1)
+  const b = snap.b[0]
+  assert.ok(typeof b.x === 'number' && typeof b.y === 'number')
+  assert.equal(b.c, 'w')
+})
+
+test('leaderboard sanitizes names and rejects bogus times', async () => {
+  process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dod-lb-'))
+  const lb = await import('../server/leaderboard.js')
+
+  assert.equal(lb.sanitizeName('<script>alert(1)</script>'), 'scriptalert1scri') // stripped + capped at 16
+  assert.equal(lb.sanitizeName('   '), 'NAMELESS HERO')
+  assert.equal(lb.sanitizeName('x'.repeat(99)).length, 16)
+
+  assert.equal(lb.submitTime('cheater', 500).ok, false, 'sub-10s times rejected')
+  assert.equal(lb.submitTime('cheater', NaN).ok, false)
+  assert.equal(lb.submitTime('cheater', '120000').ok, false, 'non-numeric rejected')
+
+  const a = lb.submitTime('slow', 300_000)
+  const b = lb.submitTime('fast', 60_000)
+  assert.equal(a.ok, true)
+  assert.equal(b.rank, 1, 'faster time ranks first')
+  const top = lb.topTimes()
+  assert.equal(top[0].name, 'fast')
+  assert.equal(top[1].name, 'slow')
 })
 
 test('snapshot serializes and events drain', () => {

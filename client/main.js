@@ -9,6 +9,7 @@ import { Input } from './input.js'
 import { Hud } from './hud.js'
 import { audio } from './audio.js'
 import { PLAYER, moveCircle } from '/shared/sim.js'
+import { boltColor } from './game3d/models.js'
 
 const $ = (id) => document.getElementById(id)
 const socket = io()
@@ -29,6 +30,7 @@ const state = {
   over: false,
   bossId: null,
   bossMaxHp: 1,
+  aims: [],      // live sniper telegraphs: { eid, pid, until }
   self: { x: 0, y: 0, facing: -Math.PI / 2, dashLeft: 0, dashCd: 0, attackCd: 0, dead: false }
 }
 
@@ -98,6 +100,8 @@ function setupWorld (init) {
   state.snaps = []
   state.latest = null
   state.over = false
+  state.aims = []
+  $('score-submit').classList.add('hidden')
 
   const me = init.players.find(p => p.id === state.selfId) || init.players[0]
   state.self.x = me ? me.x : init.dungeon.spawnX
@@ -128,10 +132,70 @@ function backToMenu () {
   input.setEnabled(false)
   hud.hide()
   $('menu').classList.remove('hidden')
+  refreshLeaderboard()
 }
 
 $('btn-restart').addEventListener('click', () => socket.emit('restart'))
 $('btn-menu').addEventListener('click', backToMenu)
+
+// ---- global leaderboard (fastest solo clears) ----
+
+function formatMs (ms) {
+  const total = Math.floor(ms / 1000)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+async function refreshLeaderboard () {
+  try {
+    const resp = await fetch('/leaderboard')
+    const data = await resp.json()
+    renderLeaderboard(data.top || [])
+  } catch { /* dungeon unreachable — keep whatever is shown */ }
+}
+
+function renderLeaderboard (top) {
+  const list = $('lb-list')
+  list.innerHTML = ''
+  if (!top.length) {
+    const li = document.createElement('li')
+    li.className = 'lb-empty'
+    li.textContent = 'No clears yet — be the first!'
+    list.appendChild(li)
+    return
+  }
+  for (const entry of top) {
+    const li = document.createElement('li')
+    const name = document.createElement('span')
+    name.className = 'lb-name'
+    name.textContent = entry.name // textContent — names are also sanitized server-side
+    const time = document.createElement('span')
+    time.className = 'lb-time'
+    time.textContent = formatMs(entry.ms)
+    li.append(name, time)
+    list.appendChild(li)
+  }
+}
+
+$('score-name').addEventListener('keydown', (e) => {
+  e.stopPropagation() // typing a name must not trigger game hotkeys
+  if (e.key === 'Enter') $('btn-submit-score').click()
+})
+
+$('btn-submit-score').addEventListener('click', () => {
+  const name = $('score-name').value.trim()
+  if (!name) return hud.toast('Etch a name first, hero.')
+  localStorage.setItem('dod-name', name)
+  socket.emit('submitScore', { name }, (resp) => {
+    if (!resp || !resp.ok) return hud.toast(resp?.error || 'The board rejects you.')
+    $('score-submit').classList.add('hidden')
+    hud.toast(resp.rank
+      ? `Etched into legend — rank #${resp.rank}!`
+      : 'A worthy clear, but not among the ten fastest.')
+    if (resp.top) renderLeaderboard(resp.top)
+  })
+})
+
+refreshLeaderboard()
 
 // ---- socket events ----
 
@@ -180,10 +244,40 @@ function handleEvent (ev, s) {
       break
     case 'ewindup':
       // telegraph: the enemy glows before striking — your cue to dash away
-      entities.flash(ev.id, 0xffc83e, 0.35)
+      if (ev.w === 'aim') {
+        // deadeye draws a bead: crimson glow + a tracking laser-sight beam
+        entities.flash(ev.id, 0xff4040, 0.9)
+        state.aims = state.aims.filter(a => a.eid !== ev.id)
+        state.aims.push({ eid: ev.id, pid: ev.t, until: performance.now() + 950 })
+        if (ev.t === state.selfId) audio.aim()
+      } else if (ev.w === 'cast') {
+        entities.flash(ev.id, 0x9b4dff, 0.5)
+      } else {
+        entities.flash(ev.id, 0xffc83e, 0.35)
+      }
       break
     case 'eswing':
       audio.swing()
+      break
+    case 'ecast':
+      // hexbolt leaves the staff
+      state.aims = state.aims.filter(a => a.eid !== ev.id)
+      effects.muzzle(ev.x, ev.y, 0xb44dff)
+      audio.cast()
+      break
+    case 'eshoot':
+      // deadeye looses its tracer
+      state.aims = state.aims.filter(a => a.eid !== ev.id)
+      effects.muzzle(ev.x, ev.y, 0xffe9a0)
+      audio.arrow()
+      break
+    case 'boltbreak':
+      effects.sparks(ev.x, ev.y, boltColor(ev.c))
+      audio.shatter()
+      break
+    case 'bossvolley':
+      audio.cast()
+      world.addShake(0.18)
       break
     case 'phit': {
       entities.flash(ev.id)
@@ -195,6 +289,7 @@ function handleEvent (ev, s) {
       break
     }
     case 'edeath': {
+      state.aims = state.aims.filter(a => a.eid !== ev.id)
       entities.killEnemy(ev.id)
       effects.ring(ev.x, ev.y, 0xff7040, ev.type === 'boss' ? 3 : 1.2)
       audio.enemyDeath()
@@ -228,6 +323,11 @@ function handleEvent (ev, s) {
         `The Dungeon Overlord is slain.<br>` +
         `Time: ${Math.floor(secs / 60)}m ${secs % 60}s &nbsp;&middot;&nbsp; ` +
         `Gold: ${me ? me.co : 0} &nbsp;&middot;&nbsp; Kills: ${me ? me.ki : 0}`)
+      // solo clears can be etched onto the global leaderboard
+      if (state.solo) {
+        $('score-name').value = localStorage.getItem('dod-name') || ''
+        $('score-submit').classList.remove('hidden')
+      }
       break
     }
     case 'gameover': {
@@ -289,7 +389,11 @@ function interpolate (renderT) {
       f: lerpAngle(e0.f, e1.f, t)
     }
   })
-  return { players, enemies, pickups: s1.s.k }
+  const bolts = (s1.s.b || []).map(b1 => {
+    const b0 = (s0.s.b || []).find(b => b.id === b1.id) || b1
+    return { ...b1, x: lerp(b0.x, b1.x, t), y: lerp(b0.y, b1.y, t) }
+  })
+  return { players, enemies, bolts, pickups: s1.s.k }
 }
 
 // ---- input sending & self-prediction ----
@@ -325,7 +429,8 @@ function predictSelf (dt, now) {
   const speed = PLAYER.SPEED * (self.dashLeft > 0 ? PLAYER.DASH_SPEED_MULT : 1)
   if (mx !== 0 || my !== 0) {
     self.facing = Math.atan2(my, mx)
-    const moved = moveCircle(state.dungeon.grid, self.x, self.y, PLAYER.RADIUS, mx * speed * dt, my * speed * dt)
+    const moved = moveCircle(state.dungeon.grid, self.x, self.y, PLAYER.RADIUS,
+      mx * speed * dt, my * speed * dt, state.dungeon.obstacles)
     self.x = moved.x
     self.y = moved.y
   }
@@ -365,7 +470,23 @@ function frame (now) {
         : { ...p, maxHp: 100 })
       entities.syncPlayers(playerStates, state.selfId)
       entities.syncEnemies(interp.enemies)
+      entities.syncBolts(interp.bolts)
       entities.syncPickups(interp.pickups)
+
+      // sniper laser-sights: track live from the shooter to its mark
+      state.aims = state.aims.filter(a => {
+        const shooter = entities.enemies.get(a.eid)
+        const markPos = a.pid === state.selfId
+          ? state.self
+          : interp.players.find(p => p.id === a.pid)
+        if (performance.now() > a.until || !shooter || !markPos) {
+          effects.clearBeam(a.eid)
+          return false
+        }
+        effects.setBeam(a.eid, shooter.group.position.x, shooter.group.position.z,
+          markPos.x, markPos.y)
+        return true
+      })
 
       // HUD vitals from authoritative state
       const me = findSnapPlayer(state.latest, state.selfId)

@@ -64,6 +64,10 @@
         </div>
       </div>
       <p id="menu-error" class="menu-error"></p>
+      <div id="leaderboard">
+        <div class="lb-title">&#9813; FASTEST SOLO CLEARS</div>
+        <ol id="lb-list"><li class="lb-empty">No clears yet &mdash; be the first!</li></ol>
+      </div>
       <p class="controls-hint">
         WASD / arrows to move &nbsp;&middot;&nbsp; SPACE or click to attack &nbsp;&middot;&nbsp; SHIFT to dash &nbsp;&middot;&nbsp; M to mute
       </p>
@@ -75,6 +79,10 @@
     <div class="overlay-inner">
       <h2 id="overlay-title"></h2>
       <p id="overlay-stats"></p>
+      <div id="score-submit" class="hidden">
+        <input id="score-name" maxlength="16" placeholder="YOUR NAME" autocomplete="off" spellcheck="false">
+        <button id="btn-submit-score" class="menu-btn slim">Etch Your Name</button>
+      </div>
       <div class="overlay-buttons">
         <button id="btn-restart" class="menu-btn">Run It Back</button>
         <button id="btn-menu" class="menu-btn slim">Main Menu</button>

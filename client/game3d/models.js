@@ -272,6 +272,199 @@ export function makeGrunt () {
   return { group, rig, parts: { legL, legR, armL, armR }, bar }
 }
 
+// hooded cultist: layered robes, glowing violet eyes under the cowl, and a
+// gnarled staff crowned with a floating hex-orb
+export function makeWarlock () {
+  const group = new THREE.Group()
+  const rig = new THREE.Group()
+  group.add(rig)
+
+  const robeMat = new THREE.MeshStandardMaterial({ color: 0x2c1b3e, roughness: 0.85, flatShading: true })
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x4d2f6b, roughness: 0.7 })
+  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x8a7340, roughness: 0.9 })
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x33241a, roughness: 0.9 })
+  const orbMat = new THREE.MeshStandardMaterial({
+    color: 0xb44dff, emissive: 0x7a1fd6, emissiveIntensity: 1.4, roughness: 0.2
+  })
+
+  // flowing robe (no legs — the hem sways instead)
+  const hem = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.38, 0.5, 9), robeMat)
+  hem.position.y = 0.25
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.31, 0.62, 9), robeMat)
+  body.position.y = 0.78
+  const rope = new THREE.Mesh(new THREE.TorusGeometry(0.245, 0.025, 6, 12), ropeMat)
+  rope.rotation.x = Math.PI / 2
+  rope.position.y = 0.62
+  const mantle = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.31, 0.18, 9), trimMat)
+  mantle.position.y = 1.08
+  rig.add(hem, body, rope, mantle)
+
+  // cowl with a shadowed face and burning eyes
+  const hood = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), robeMat)
+  hood.position.set(0, 1.26, 0)
+  hood.scale.set(1, 1.15, 1.05)
+  const peak = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.3, 8), robeMat)
+  peak.position.set(0, 1.5, -0.04)
+  peak.rotation.x = 0.25
+  const face = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0x0a0612, roughness: 1 })
+  )
+  face.position.set(0, 1.25, 0.08)
+  rig.add(hood, peak, face)
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xc46bff })
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 8), eyeMat)
+    eye.position.set(side * 0.06, 1.27, 0.2)
+    rig.add(eye)
+  }
+
+  // left claw reaches forward; right arm raises the staff
+  const armL = armPivot(-0.24, 0.98, 0.04, 0.55)
+  const sleeveL = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.4, 7), robeMat)
+  sleeveL.rotation.x = Math.PI / 2
+  sleeveL.position.z = 0.18
+  armL.add(sleeveL)
+  const armR = armPivot(0.26, 0.98, 0.04, 0.25)
+  const sleeveR = sleeveL.clone()
+  const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.035, 1.25, 6), woodMat)
+  staff.position.set(0.04, 0.1, 0.34)
+  const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 0), orbMat)
+  orb.position.set(0.04, 0.78, 0.34)
+  const orbGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 8, 8),
+    new THREE.MeshBasicMaterial({
+      color: 0xb44dff, transparent: true, opacity: 0.22,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    })
+  )
+  orbGlow.position.copy(orb.position)
+  armR.add(sleeveR, staff, orb, orbGlow)
+  rig.add(armL, armR)
+
+  group.add(circleShadow(0.4))
+  const bar = healthBar(0.8)
+  bar.position.y = 1.85
+  group.add(bar)
+  return { group, rig, parts: { armL, armR }, bar }
+}
+
+// skeletal deadeye: a bone sniper in a tattered cloak with a single burning
+// crimson eye and a heavy arbalest held at the shoulder
+export function makeArcher () {
+  const group = new THREE.Group()
+  const rig = new THREE.Group()
+  group.add(rig)
+
+  const boneMat = new THREE.MeshStandardMaterial({ color: 0xd9d2bd, roughness: 0.65 })
+  const darkBoneMat = new THREE.MeshStandardMaterial({ color: 0xa89f88, roughness: 0.75 })
+  const clothMat = new THREE.MeshStandardMaterial({
+    color: 0x2a3038, roughness: 0.95, side: THREE.DoubleSide
+  })
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x3e2c1c, roughness: 0.85 })
+  const ironMat = new THREE.MeshStandardMaterial({ color: 0x6d737d, roughness: 0.4, metalness: 0.65 })
+
+  // bone legs on hip pivots
+  const mkLeg = (side) => {
+    const hip = new THREE.Group()
+    hip.position.set(side * 0.11, 0.42, 0)
+    const femur = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.03, 0.34, 6), boneMat)
+    femur.position.y = -0.17
+    const knee = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), boneMat)
+    knee.position.y = -0.34
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.16), darkBoneMat)
+    foot.position.set(0, -0.4, 0.03)
+    hip.add(femur, knee, foot)
+    rig.add(hip)
+    return hip
+  }
+  const legL = mkLeg(-1)
+  const legR = mkLeg(1)
+
+  // pelvis, spine and ribcage
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.1, 0.14), boneMat)
+  pelvis.position.y = 0.46
+  const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.42, 6), darkBoneMat)
+  spine.position.y = 0.68
+  rig.add(pelvis, spine)
+  for (let i = 0; i < 3; i++) {
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(0.13 - i * 0.015, 0.02, 6, 10), boneMat)
+    rib.rotation.x = Math.PI / 2
+    rib.position.y = 0.82 - i * 0.09
+    rib.scale.z = 1.25
+    rig.add(rib)
+  }
+
+  // tattered cloak hanging from the shoulders
+  const cloak = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.62, 1, 3), clothMat)
+  cloak.position.set(0, 0.68, -0.14)
+  cloak.rotation.x = 0.18
+  rig.add(cloak)
+
+  // skull: cranium, jaw, one burning crimson eye
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), boneMat)
+  skull.position.set(0, 1.06, 0.02)
+  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.1), darkBoneMat)
+  jaw.position.set(0, 0.97, 0.06)
+  const socket = new THREE.Mesh(
+    new THREE.SphereGeometry(0.035, 6, 6),
+    new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 1 })
+  )
+  socket.position.set(-0.05, 1.08, 0.13)
+  const deadeye = new THREE.Mesh(
+    new THREE.SphereGeometry(0.045, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff4040 })
+  )
+  deadeye.position.set(0.055, 1.08, 0.12)
+  const hoodBack = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8, 0, Math.PI * 2, 0, Math.PI / 1.6), clothMat)
+  hoodBack.position.set(0, 1.08, -0.03)
+  hoodBack.rotation.x = -0.4
+  rig.add(skull, jaw, socket, deadeye, hoodBack)
+
+  // quiver of bolts on the back
+  const quiver = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.34, 7), woodMat)
+  quiver.position.set(-0.16, 0.78, -0.16)
+  quiver.rotation.z = 0.4
+  rig.add(quiver)
+  for (let i = 0; i < 3; i++) {
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 4), boneMat)
+    shaft.position.set(-0.21 + i * 0.045, 0.98 + (i % 2) * 0.03, -0.16)
+    shaft.rotation.z = 0.4
+    rig.add(shaft)
+  }
+
+  // arms shoulder the arbalest: stock, bow limbs, string and a loaded bolt
+  const armL = armPivot(-0.2, 0.88, 0.05, 0.85)
+  const boneArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.3, 5), boneMat)
+  boneArmL.rotation.x = Math.PI / 2
+  boneArmL.position.z = 0.14
+  armL.add(boneArmL)
+  const armR = armPivot(0.2, 0.88, 0.05, 0.6)
+  const boneArmR = boneArmL.clone()
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.62), woodMat)
+  stock.position.set(-0.1, 0.02, 0.4)
+  const limbs = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.035, 0.05), ironMat)
+  limbs.position.set(-0.1, 0.05, 0.62)
+  for (const side of [-1, 1]) {
+    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.34, 3), boneMat)
+    string.position.set(-0.1 + side * 0.14, 0.05, 0.48)
+    string.rotation.x = Math.PI / 2
+    string.rotation.z = side * 0.45
+    armR.add(string)
+  }
+  const loaded = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.4, 4), ironMat)
+  loaded.rotation.x = Math.PI / 2
+  loaded.position.set(-0.1, 0.08, 0.5)
+  armR.add(boneArmR, stock, limbs, loaded)
+  rig.add(armL, armR)
+
+  group.add(circleShadow(0.36))
+  const bar = healthBar(0.8)
+  bar.position.y = 1.55
+  group.add(bar)
+  return { group, rig, parts: { legL, legR, armL, armR }, bar }
+}
+
 // ogre bruiser: massive tapered torso, shoulder plates, tusked underbite
 export function makeBrute () {
   const group = new THREE.Group()
@@ -454,6 +647,51 @@ export function makeBoss () {
   bar.position.y = 3.15
   group.add(bar)
   return { group, rig, parts: { armL, armR }, bar }
+}
+
+// ---- projectiles ----
+
+const BOLT_STYLES = {
+  w: { color: 0xb44dff, glow: 0x8a2be2, len: 1.0, size: 0.09, y: 0.8 },  // warlock hexbolt
+  b: { color: 0xff6a2a, glow: 0xd63a10, len: 1.0, size: 0.1, y: 0.9 },   // boss volley
+  a: { color: 0xffe9a0, glow: 0xd6a832, len: 2.6, size: 0.05, y: 0.9 }   // deadeye tracer
+}
+
+export const boltColor = (c) => (BOLT_STYLES[c] || BOLT_STYLES.w).color
+
+// glowing core stretched along +z plus an additive halo and trailing streak
+export function makeBolt (c) {
+  const style = BOLT_STYLES[c] || BOLT_STYLES.w
+  const group = new THREE.Group()
+  const spin = new THREE.Group()
+  spin.position.y = style.y
+  group.add(spin)
+
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(style.size, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  )
+  core.scale.z = style.len
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(style.size * 2.1, 8, 8),
+    new THREE.MeshBasicMaterial({
+      color: style.color, transparent: true, opacity: 0.45,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    })
+  )
+  halo.scale.z = style.len * 1.15
+  const trail = new THREE.Mesh(
+    new THREE.ConeGeometry(style.size * 1.4, style.size * 14, 6),
+    new THREE.MeshBasicMaterial({
+      color: style.glow, transparent: true, opacity: 0.35,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    })
+  )
+  trail.rotation.x = -Math.PI / 2
+  trail.position.z = -style.size * 7.5
+  spin.add(core, halo, trail)
+  group.userData.spin = spin
+  return group
 }
 
 // ---- pickups ----
